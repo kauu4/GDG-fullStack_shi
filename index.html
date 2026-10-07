@@ -1,0 +1,174 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Campus Marketplace</title>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<style>
+:root{--bg:#f6f7fb;--c:#fff;--t:#1b1f2a;--m:#6b7280;--p:#4f46e5;--b:#e5e7eb;--ok:#16a34a;--bad:#dc2626}
+@media(prefers-color-scheme:dark){:root{--bg:#0f1117;--c:#181b24;--t:#e8eaf0;--m:#9aa1b0;--b:#2a2f3c}}
+*{box-sizing:border-box}body{margin:0;font:15px system-ui,sans-serif;background:var(--bg);color:var(--t)}
+header{position:sticky;top:0;z-index:5;background:var(--c);border-bottom:1px solid var(--b);display:flex;flex-wrap:wrap;gap:10px;align-items:center;padding:10px 16px}
+header h1{font-size:18px;margin:0;flex:1}.chip{background:var(--bg);padding:6px 10px;border-radius:99px;font-size:13px}
+button,select,input,textarea{font:inherit;color:var(--t)}
+.btn{background:var(--p);color:#fff;border:0;padding:8px 14px;border-radius:8px;cursor:pointer}.btn.g{background:var(--bg);color:var(--t);border:1px solid var(--b)}.btn.r{background:var(--bad)}.btn:disabled{opacity:.5}
+nav{display:flex;gap:6px;padding:12px 16px;overflow:auto}nav button{border:1px solid var(--b);background:var(--c);padding:7px 14px;border-radius:99px;cursor:pointer;white-space:nowrap}nav button.on{background:var(--p);color:#fff;border-color:var(--p)}
+main{padding:0 16px 40px;max-width:1100px;margin:auto}
+.bar{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:14px}.bar input,.bar select{padding:8px 10px;border:1px solid var(--b);border-radius:8px;background:var(--c)}.bar input[type=search]{flex:1;min-width:160px}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:14px}
+.card{background:var(--c);border:1px solid var(--b);border-radius:12px;overflow:hidden;cursor:pointer;position:relative;transition:transform .15s}.card:hover{transform:translateY(-3px)}
+.card img,.ph{width:100%;height:150px;object-fit:cover;background:var(--b);display:block}.card .in{padding:10px}.card h3{margin:0 0 4px;font-size:15px}.m{color:var(--m);font-size:13px}
+.sold img,.sold .ph{filter:grayscale(1);opacity:.6}.tag{position:absolute;top:8px;left:8px;background:var(--bad);color:#fff;padding:2px 8px;border-radius:6px;font-size:12px;font-weight:700}
+.fav{position:absolute;top:6px;right:8px;background:var(--c);border:0;border-radius:99px;width:30px;height:30px;cursor:pointer;font-size:16px}
+.sk{height:230px;border-radius:12px;background:linear-gradient(90deg,var(--b),var(--c),var(--b));background-size:200%;animation:s 1.2s infinite}@keyframes s{to{background-position:-200%}}
+.empty,.err{text-align:center;padding:40px;color:var(--m)}.err{color:var(--bad)}
+dialog{border:0;border-radius:14px;padding:20px;width:min(520px,94vw);background:var(--c);color:var(--t)}dialog::backdrop{background:#0008}
+dialog label{display:block;margin:10px 0 4px;font-size:13px;color:var(--m)}dialog input,dialog select,dialog textarea{width:100%;padding:8px;border:1px solid var(--b);border-radius:8px;background:var(--bg)}
+.row{display:flex;gap:8px;flex-wrap:wrap;margin-top:14px}.fe{color:var(--bad);font-size:13px;min-height:16px}
+.msgs{max-height:180px;overflow:auto;border:1px solid var(--b);border-radius:8px;padding:8px;margin:10px 0}.msg{margin:4px 0;padding:6px 10px;border-radius:10px;background:var(--bg);max-width:80%}.msg.me{margin-left:auto;background:var(--p);color:#fff}
+#toast{position:fixed;bottom:18px;left:50%;transform:translateX(-50%);background:var(--t);color:var(--bg);padding:10px 16px;border-radius:8px;display:none;z-index:99}
+.two{display:grid;grid-template-columns:1fr 1fr;gap:16px}@media(max-width:700px){.two{grid-template-columns:1fr}}.box{background:var(--c);border:1px solid var(--b);border-radius:12px;padding:14px}
+</style></head><body>
+<header><h1>🎓 Campus Marketplace</h1><span class="chip" id="clock"></span><span class="chip" id="wx">Weather…</span>
+<span id="auth"></span></header>
+<nav id="tabs"></nav><main id="main"></main><div id="toast"></div>
+<dialog id="dlg"></dialog>
+<script>
+// ====== CONFIG: paste your Supabase values (Project Settings > API). The anon key is safe to expose; RLS protects data.
+const SUPABASE_URL='YOUR_SUPABASE_URL', SUPABASE_ANON_KEY='YOUR_SUPABASE_ANON_KEY';
+const sb=supabase.createClient(SUPABASE_URL,SUPABASE_ANON_KEY);
+const CATS=['Textbooks','Electronics','Lab Supplies','Furniture','Stationery','Other'];
+const $=s=>document.querySelector(s);
+const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+let me=null,items=[],favs=new Set(),tab='browse',loading=true,error=null,pos=null,F={q:'',cat:'',max:'',avail:true,near:false},charts=[];
+const toast=(m)=>{const t=$('#toast');t.textContent=m;t.style.display='block';clearTimeout(t.h);t.h=setTimeout(()=>t.style.display='none',2800)};
+const debounce=(f,ms=250)=>{let h;return(...a)=>{clearTimeout(h);h=setTimeout(()=>f(...a),ms)}};
+const km=(a,b,c,d)=>{const r=x=>x*Math.PI/180,h=Math.sin(r(c-a)/2)**2+Math.cos(r(a))*Math.cos(r(c))*Math.sin(r(d-b)/2)**2;return 12742*Math.asin(Math.sqrt(h))};
+
+// ---- clock + weather (Open-Meteo, no key needed)
+setInterval(()=>$('#clock').textContent=new Date().toLocaleString([], {weekday:'short',hour:'2-digit',minute:'2-digit',second:'2-digit'}),1000);
+const WX={0:'☀️ Clear',1:'🌤 Mostly clear',2:'⛅ Partly cloudy',3:'☁️ Cloudy',45:'🌫 Fog',61:'🌦 Rain',63:'🌧 Rain',65:'🌧 Heavy rain',80:'🌦 Showers',95:'⛈ Storm'};
+async function weather(lat=12.97,lng=77.59){try{const r=await fetch(`https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lng}&current=temperature_2m,weather_code`);const d=(await r.json()).current;$('#wx').textContent=`${WX[d.weather_code]||'🌡'} ${Math.round(d.temperature_2m)}°C`}catch{$('#wx').textContent='Weather unavailable'}}
+weather();
+navigator.geolocation?.getCurrentPosition(p=>{pos={lat:p.coords.latitude,lng:p.coords.longitude};weather(pos.lat,pos.lng)},()=>{},{timeout:8000});
+
+// ---- data
+async function load(){
+  const {data,error:e}=await sb.from('listings').select('*,profiles(name)').order('created_at',{ascending:false});
+  if(e){error=e.message}else{items=data;error=null}
+  if(me){const {data:f}=await sb.from('favourites').select('listing_id');favs=new Set((f||[]).map(x=>x.listing_id))}
+  loading=false;render();
+}
+const reload=debounce(load,400);
+
+// ---- auth
+async function init(){
+  const {data:{session}}=await sb.auth.getSession();me=session?.user||null;authUI();
+  sb.auth.onAuthStateChange((_e,s)=>{me=s?.user||null;authUI();load();subscribe()});
+  tabsUI();await load();subscribe();
+}
+function authUI(){$('#auth').innerHTML=me?`<span class="m">${esc(me.user_metadata?.name||me.email)}</span> <button class="btn g" onclick="sb.auth.signOut()">Log out</button>`:`<button class="btn" onclick="authDlg()">Log in / Sign up</button>`;tabsUI()}
+function authDlg(mode='in'){const up=mode==='up';
+  $('#dlg').innerHTML=`<h2>${up?'Create account':'Log in'}</h2>${up?'<label>Name</label><input id="an">':''}<label>Email</label><input id="ae" type="email"><label>Password (min 6)</label><input id="ap" type="password"><div class="fe" id="fe"></div>
+  <div class="row"><button class="btn" id="go">${up?'Sign up':'Log in'}</button><button class="btn g" onclick="authDlg('${up?'in':'up'}')">${up?'Have an account?':'Need an account?'}</button><button class="btn g" onclick="dlg.close()">Cancel</button></div>`;
+  dlg.showModal();
+  $('#go').onclick=async()=>{const email=$('#ae').value.trim(),password=$('#ap').value,name=up?$('#an').value.trim():'';
+    if(!/^\S+@\S+\.\S+$/.test(email))return fe('Enter a valid email');if(password.length<6)return fe('Password must be 6+ characters');if(up&&name.length<2)return fe('Enter your name');
+    $('#go').disabled=true;const {error:e}=up?await sb.auth.signUp({email,password,options:{data:{name}}}):await sb.auth.signInWithPassword({email,password});
+    $('#go').disabled=false;if(e)return fe(e.message);dlg.close();toast(up?'Account created! Check email if confirmation is on.':'Welcome back!')}}
+const dlg=$('#dlg'),fe=m=>$('#fe').textContent=m;
+const need=()=>{if(!me){authDlg();return false}return true};
+
+// ---- tabs / render
+function tabsUI(){const T=[['browse','🛍 Browse'],['mine','📦 My Listings'],['favs','❤️ Favourites'],['chats','💬 Chats'],['insights','📊 Insights']];
+  $('#tabs').innerHTML=T.map(([k,l])=>`<button class="${tab===k?'on':''}" onclick="go('${k}')">${l}</button>`).join('')+(me?`<button class="btn" style="margin-left:auto" onclick="form()">+ New listing</button>`:'')}
+function go(t){if(['mine','favs','chats'].includes(t)&&!need())return;tab=t;tabsUI();render()}
+function filtered(){let l=items;
+  if(tab==='mine')l=l.filter(i=>i.seller_id===me?.id);else if(tab==='favs')l=l.filter(i=>favs.has(i.id));
+  else{if(F.avail)l=l.filter(i=>i.status==='available')}
+  const q=F.q.toLowerCase();if(q)l=l.filter(i=>(i.title+i.description).toLowerCase().includes(q));
+  if(F.cat)l=l.filter(i=>i.category===F.cat);if(F.max)l=l.filter(i=>i.price<=+F.max);
+  if(F.near&&pos){l=l.map(i=>({...i,d:i.lat!=null?km(pos.lat,pos.lng,i.lat,i.lng):1e9})).sort((a,b)=>a.d-b.d)}
+  return l}
+function card(i){const d=i.d!=null&&i.d<1e9?` · ${i.d.toFixed(1)} km`:'';
+  return `<div class="card ${i.status==='sold'?'sold':''}" onclick="detail('${i.id}')">${i.status==='sold'?'<span class="tag">SOLD</span>':''}
+  <button class="fav" onclick="event.stopPropagation();fav('${i.id}')">${favs.has(i.id)?'❤️':'🤍'}</button>
+  ${i.image_url?`<img loading="lazy" src="${esc(i.image_url)}" alt="">`:'<div class="ph"></div>'}
+  <div class="in"><h3>${esc(i.title)}</h3><b>₹${i.price}</b><div class="m">${esc(i.category)}${d}</div></div></div>`}
+function render(){charts.forEach(c=>c.destroy());charts=[];const m=$('#main');
+  if(tab==='insights')return insights(m);if(tab==='chats')return chats(m);
+  const bar=tab==='browse'?`<div class="bar"><input type="search" placeholder="Search listings…" value="${esc(F.q)}" oninput="F.q=this.value;list()">
+  <select onchange="F.cat=this.value;list()"><option value="">All categories</option>${CATS.map(c=>`<option ${F.cat===c?'selected':''}>${c}</option>`).join('')}</select>
+  <input type="number" min="0" placeholder="Max ₹" style="width:100px" value="${F.max}" oninput="F.max=this.value;list()">
+  <label class="chip"><input type="checkbox" ${F.avail?'checked':''} onchange="F.avail=this.checked;list()"> Available only</label>
+  <label class="chip"><input type="checkbox" ${F.near?'checked':''} onchange="nearMe(this)"> 📍 Near me</label></div>`:'';
+  m.innerHTML=bar+'<div id="lst"></div>';list()}
+const list=debounce(()=>{const e=$('#lst');if(!e)return;
+  if(loading)return e.innerHTML='<div class="grid">'+'<div class="sk"></div>'.repeat(8)+'</div>';
+  if(error)return e.innerHTML=`<div class="err">⚠️ ${esc(error)}<br><br><button class="btn" onclick="loading=true;load()">Retry</button></div>`;
+  const l=filtered();e.innerHTML=l.length?`<div class="grid">${l.map(card).join('')}</div>`:`<div class="empty">Nothing here yet.${tab==='mine'?' Create your first listing!':''}</div>`},80);
+function nearMe(c){if(c.checked&&!pos){c.checked=false;return toast('Allow location access to use this')}F.near=c.checked;list()}
+async function fav(id){if(!need())return;const on=favs.has(id);on?favs.delete(id):favs.add(id);render();
+  const {error:e}=on?await sb.from('favourites').delete().eq('listing_id',id):await sb.from('favourites').insert({listing_id:id});if(e){toast(e.message);load()}}
+
+// ---- listing form (create/edit) + AI description
+function form(id){if(!need())return;const i=items.find(x=>x.id===id)||{};
+  dlg.innerHTML=`<h2>${id?'Edit':'New'} listing</h2><label>Item name</label><input id="t" maxlength="80" value="${esc(i.title)}" placeholder="Product 1">
+  <label>Category</label><select id="c">${CATS.map(c=>`<option ${i.category===c?'selected':''}>${c}</option>`).join('')}</select>
+  <label>Price (₹)</label><input id="p" type="number" min="0" value="${i.price??''}">
+  <label>Description <button class="btn g" id="ai" style="padding:2px 8px;float:right">✨ AI write</button></label><textarea id="d" rows="4" maxlength="600">${esc(i.description)}</textarea>
+  <label>Image (max 3MB)</label><input id="f" type="file" accept="image/*"><div class="fe" id="fe"></div>
+  <div class="row"><button class="btn" id="sv">Save</button><button class="btn g" onclick="dlg.close()">Cancel</button></div>`;dlg.showModal();
+  $('#ai').onclick=async()=>{const t=$('#t').value.trim();if(t.length<3)return fe('Enter an item name first');$('#ai').textContent='…';
+    try{const {data:{session}}=await sb.auth.getSession();const r=await fetch('/api/describe',{method:'POST',headers:{'content-type':'application/json',Authorization:'Bearer '+session.access_token},body:JSON.stringify({title:t,category:$('#c').value,price:$('#p').value})});
+      const d=await r.json();if(!r.ok)throw Error(d.error);$('#d').value=d.description;fe('')}catch(e){fe('AI failed: '+e.message)}$('#ai').textContent='✨ AI write'};
+  $('#sv').onclick=async()=>{const title=$('#t').value.trim(),price=parseFloat($('#p').value),desc=$('#d').value.trim(),file=$('#f').files[0];
+    if(title.length<3)return fe('Name must be 3+ characters');if(isNaN(price)||price<0)return fe('Enter a valid price');if(desc.length<10)return fe('Description needs 10+ characters');
+    if(file&&(!file.type.startsWith('image/')||file.size>3e6))return fe('Image must be an image under 3MB');
+    $('#sv').disabled=true;$('#sv').textContent='Saving…';
+    try{let image_url=i.image_url||null;
+      if(file){const path=`${me.id}/${Date.now()}-${file.name.replace(/[^\w.]/g,'_')}`;const {error:ue}=await sb.storage.from('listing-images').upload(path,file);if(ue)throw ue;image_url=sb.storage.from('listing-images').getPublicUrl(path).data.publicUrl}
+      const row={title,price,description:desc,category:$('#c').value,image_url};if(!id&&pos){row.lat=pos.lat;row.lng=pos.lng}
+      const {error:e}=id?await sb.from('listings').update(row).eq('id',id):await sb.from('listings').insert(row);if(e)throw e;
+      dlg.close();toast('Saved!');load()}catch(e){fe(e.message);$('#sv').disabled=false;$('#sv').textContent='Save'}}}
+
+// ---- detail + chat
+async function detail(id){const i=items.find(x=>x.id===id);if(!i)return;const mine=me?.id===i.seller_id;
+  dlg.innerHTML=`${i.image_url?`<img src="${esc(i.image_url)}" style="width:100%;max-height:260px;object-fit:cover;border-radius:10px">`:''}
+  <h2>${esc(i.title)} ${i.status==='sold'?'<span class="tag" style="position:static">SOLD</span>':''}</h2><b>₹${i.price}</b> · <span class="m">${esc(i.category)} · by ${esc(i.profiles?.name||'student')} · ${new Date(i.created_at).toLocaleDateString()}</span>
+  <p>${esc(i.description)}</p>
+  ${mine?`<div class="row"><button class="btn g" onclick="form('${id}')">Edit</button><button class="btn g" onclick="sold('${id}','${i.status==='sold'?'available':'sold'}')">${i.status==='sold'?'Mark available':'Mark sold'}</button><button class="btn r" onclick="del('${id}')">Delete</button></div>`:''}
+  ${me&&i.status==='available'||mine?`<h3>💬 Chat</h3><div class="msgs" id="ms"><span class="m">Loading…</span></div><div class="row" style="margin-top:0"><input id="mb" maxlength="500" placeholder="Type a message" style="flex:1;padding:8px;border:1px solid var(--b);border-radius:8px;background:var(--bg)"><button class="btn" id="ms-send">Send</button></div>`:(!me?'<p class="m">Log in to chat with the seller.</p>':'')}
+  <div class="row"><button class="btn g" onclick="dlg.close()">Close</button></div>`;dlg.showModal();
+  if(me&&(i.status==='available'||mine))thread(i)}
+let cur=null;
+async function thread(i){cur=i;const {data}=await sb.from('messages').select('*').eq('listing_id',i.id).order('created_at');drawMsgs(data||[]);
+  const send=()=>{const b=$('#mb').value.trim();if(!b)return;const other=i.seller_id===me.id?[...(data||[])].reverse().find(m=>m.sender_id!==me.id)?.sender_id:i.seller_id;
+    if(!other)return toast('Wait for a buyer to message first');$('#mb').value='';sb.from('messages').insert({listing_id:i.id,receiver_id:other,body:b}).then(({error:e})=>e&&toast(e.message))};
+  $('#ms-send').onclick=send;$('#mb').onkeydown=e=>e.key==='Enter'&&send();window._md=data||[]}
+function drawMsgs(d){const e=$('#ms');if(!e)return;window._md=d;e.innerHTML=d.length?d.map(m=>`<div class="msg ${m.sender_id===me.id?'me':''}">${esc(m.body)}</div>`).join(''):'<span class="m">No messages yet. Say hi!</span>';e.scrollTop=1e9}
+async function sold(id,s){const {error:e}=await sb.from('listings').update({status:s}).eq('id',id);if(e)return toast(e.message);dlg.close();toast(s==='sold'?'Marked as sold':'Back on sale');load()}
+async function del(id){if(!confirm('Delete this listing permanently?'))return;const {error:e}=await sb.from('listings').delete().eq('id',id);if(e)return toast(e.message);dlg.close();toast('Deleted');load()}
+async function chats(m){m.innerHTML='<div class="sk"></div>';const {data,error:e}=await sb.from('messages').select('listing_id,body,created_at').order('created_at',{ascending:false});
+  if(e)return m.innerHTML=`<div class="err">${esc(e.message)}</div>`;const seen=new Map();(data||[]).forEach(x=>seen.has(x.listing_id)||seen.set(x.listing_id,x));
+  const rows=[...seen].map(([lid,x])=>{const i=items.find(y=>y.id===lid);return i?`<div class="card" style="margin-bottom:8px" onclick="detail('${lid}')"><div class="in"><h3>${esc(i.title)}</h3><span class="m">${esc(x.body)}</span></div></div>`:''}).join('');
+  m.innerHTML=rows||'<div class="empty">No conversations yet.</div>'}
+
+// ---- insights (Chart.js, top 5 sellers & buyers)
+async function insights(m){m.innerHTML='<div class="two"><div class="sk"></div><div class="sk"></div></div>';
+  const [s,b]=await Promise.all([sb.from('top_sellers').select('*'),sb.from('top_buyers').select('*')]);
+  if(s.error||b.error)return m.innerHTML=`<div class="err">${esc((s.error||b.error).message)}</div>`;
+  m.innerHTML='<div class="two"><div class="box"><h3>🏆 Top 5 sellers (items sold)</h3><canvas id="c1"></canvas></div><div class="box"><h3>🛒 Top 5 buyers (listings enquired)</h3><canvas id="c2"></canvas></div></div>'+((s.data.length+b.data.length)?'':'<div class="empty">No sales data yet.</div>');
+  const mk=(id,d,col)=>charts.push(new Chart($(id),{type:'bar',data:{labels:d.map(x=>x.name),datasets:[{data:d.map(x=>x.total),backgroundColor:col,borderRadius:6}]},options:{indexAxis:'y',plugins:{legend:{display:false}},scales:{x:{beginAtZero:true,ticks:{precision:0}}}}}));
+  mk('#c1',s.data,'#4f46e5');mk('#c2',b.data,'#16a34a')}
+
+// ---- realtime + notifications
+let ch=[];
+function subscribe(){ch.forEach(c=>sb.removeChannel(c));ch=[];
+  ch.push(sb.channel('l').on('postgres_changes',{event:'*',schema:'public',table:'listings'},reload).subscribe());
+  if(me){if('Notification'in window&&Notification.permission==='default')Notification.requestPermission();
+    ch.push(sb.channel('m'+me.id).on('postgres_changes',{event:'INSERT',schema:'public',table:'messages'},p=>{const m=p.new;
+      if(m.sender_id!==me.id&&m.receiver_id!==me.id)return;
+      if(cur&&m.listing_id===cur.id&&dlg.open){drawMsgs([...(window._md||[]),m])}
+      if(m.receiver_id===me.id&&!(dlg.open&&cur?.id===m.listing_id)){toast('💬 New message: '+m.body.slice(0,40));if(Notification?.permission==='granted'&&document.hidden)new Notification('Campus Marketplace',{body:m.body})}}).subscribe())}}
+dlg.addEventListener('close',()=>{cur=null});
+init();
+</script></body></html>
